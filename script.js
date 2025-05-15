@@ -1,129 +1,130 @@
 document.getElementById('processButton').addEventListener('click', () => {
-  const files = document.getElementById('fileInput').files;
-  const mode = document.getElementById('modeSelect').value;
-  const globalContactName = document.getElementById('globalNameInput').value.trim();
-  const fileList = document.getElementById('fileList');
-  fileList.innerHTML = '';
+    const files = document.getElementById('fileInput').files;
+    const mode = document.getElementById('modeSelect').value;
+    const fileList = document.getElementById('fileList');
+    fileList.innerHTML = '';
 
-  if (files.length === 0) {
-    alert('Silakan unggah file terlebih dahulu.');
-    return;
-  }
-
-  if (!globalContactName) {
-    alert('Nama kontak global tidak boleh kosong.');
-    return;
-  }
-
-  Array.from(files).forEach(file => {
-    const listItem = document.createElement('div');
-    listItem.classList.add('file-item');
-    const fileName = file.name;
-    const matches = fileName.match(/(.+)(\.[^.]+)$/);
-    if (!matches) {
-      listItem.classList.add('error');
-      listItem.innerHTML = `<span>${fileName}</span><span class="error-msg">Nama file tidak valid.</span>`;
-      fileList.appendChild(listItem);
-      return;
-    }
-    const [_, namePart, extension] = matches;
-    let newFileName = '';
-
-    try {
-      // Tentukan nama file baru sesuai mode
-      if (mode === 'fileName') {
-        newFileName = `${namePart}.vcf`;
-      } else if (mode === 'inBrackets') {
-        const matchBracket = namePart.match(/(.*?)/);
-        if (matchBracket) {
-          newFileName = `${matchBracket[1]}.vcf`;
-        } else {
-          throw new Error('Tidak ada tanda kurung dalam nama file.');
-        }
-      } else if (mode.startsWith('last')) {
-        const charCount = parseInt(mode.replace('last', ''), 10);
-        if (isNaN(charCount) || charCount <= 0) throw new Error('Jumlah karakter terakhir harus valid.');
-        if (namePart.length >= charCount) {
-          newFileName = `${namePart.slice(-charCount)}.vcf`;
-        } else {
-          throw new Error('Jumlah karakter melebihi panjang nama file.');
-        }
-      } else {
-        throw new Error('Mode tidak dikenal. Harap pilih mode yang valid.');
-      }
-
-      generateDownloadLink(file, newFileName, globalContactName, listItem);
-
-    } catch (error) {
-      listItem.classList.add('error');
-      listItem.innerHTML = `<span>${fileName}</span><span class="error-msg">${error.message}</span>`;
+    if (files.length === 0) {
+        alert('Silakan unggah file terlebih dahulu.');
+        return;
     }
 
-    fileList.appendChild(listItem);
-  });
+    // Ganti prompt jadi input kolom di HTML agar lebih bagus ya, ini contoh tetap pakai prompt
+    const globalContactName = prompt('Masukkan nama kontak global untuk semua file:');
+    if (!globalContactName) {
+        alert('Nama kontak tidak boleh kosong.');
+        return;
+    }
+
+    Array.from(files).forEach(file => {
+        const listItem = document.createElement('div');
+        listItem.classList.add('file-item');
+        const fileName = file.name;
+        const [namePart, extension] = fileName.match(/(.+)(\.[^.]+$)/).slice(1);
+        let newFileName = '';
+
+        try {
+            if (mode === 'normal') {
+                newFileName = `${namePart}.vcf`;
+            } else if (mode === 'inBrackets') {
+                const match = namePart.match(/(.*?)/);
+                if (match) {
+                    newFileName = `${match[1]}.vcf`;
+                } else {
+                    throw new Error('Tidak ada tanda kurung dalam nama file.');
+                }
+            } else if (mode.startsWith('last')) {
+                const charCountStr = mode.replace('last', '');
+                const charCount = parseInt(charCountStr, 10);
+
+                if (isNaN(charCount) || charCount <= 0) {
+                    throw new Error('Jumlah karakter terakhir harus berupa angka yang valid.');
+                }
+
+                if (namePart.length >= charCount) {
+                    newFileName = `${namePart.slice(-charCount)}.vcf`;
+                } else {
+                    throw new Error('Jumlah karakter melebihi panjang nama file.');
+                }
+            } else if (mode === 'fileName') {
+                newFileName = `${namePart}.vcf`;
+            } else {
+                throw new Error('Mode tidak dikenal. Harap pilih mode yang valid.');
+            }
+
+            generateDownloadLink(file, newFileName, globalContactName, listItem);
+        } catch (error) {
+            listItem.classList.add('error');
+            listItem.innerHTML = `<span>${fileName}</span><span class="error-msg">${error.message}</span>`;
+        }
+
+        fileList.appendChild(listItem);
+    });
 });
 
 function generateDownloadLink(file, newFileName, globalContactName, listItem) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const lines = reader.result
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line !== '');
+    const reader = new FileReader();
+    reader.onload = () => {
+        const txtContent = reader.result;
+        const lines = txtContent.split('\n').filter(line => line.trim() !== '');
 
-    // Filter hanya nomor yang valid (hanya digit)
-    const contacts = lines.filter(line => /^\d+$/.test(line));
+        let localCounter = 1;
+        let currentCategory = 'Anggota';
 
-    const total = contacts.length;
-    const digitCount = total >= 100 ? 3 : 2;
+        // Tentukan jumlah digit nomor untuk padding (2 digit untuk <100, 3 digit untuk >=100)
+        const totalContacts = lines.filter(l => /^\d+$/.test(l.trim())).length;
+        const digitLength = totalContacts >= 100 ? 3 : 2;
 
-    let vcfContent = '';
-    let currentCategory = 'Anggota';
-    let localCounter = 1;
+        const vcfContent = lines.map(line => {
+            const contact = line.trim();
+            const newCategory = classifyContact(contact);
+            if (newCategory) {
+                currentCategory = newCategory;
+                localCounter = 1;
+                return ''; // kategori bukan nomor, jadi skip
+            }
 
-    for (const rawContact of lines) {
-      // Cek kategori baru dari kata kunci
-      const cat = classifyContact(rawContact);
-      if (cat) {
-        currentCategory = cat;
-        localCounter = 1;
-        continue; // kategori bukan kontak
-      }
+            // Pastikan nomor hanya digit, kalau belum ada + di depan, tambahkan +
+            let phoneNumber = contact;
+            if (/^\d+$/.test(phoneNumber)) {
+                phoneNumber = '+' + phoneNumber;
+            }
 
-      // Jika kontak valid digit saja
-      if (/^\d+$/.test(rawContact)) {
-        // Pastikan nomor diawali '+'
-        const contactNumber = rawContact.startsWith('+') ? rawContact : '+' + rawContact;
+            if (/^\+\d+$/.test(phoneNumber)) {
+                const numberPadded = String(localCounter).padStart(digitLength, '0');
+                const contactName = `${globalContactName} ${numberPadded}`;
+                const fullContactName = currentCategory === 'Anggota' ? contactName : `${contactName} (${currentCategory})`;
 
-        // Format nomor urut dengan leading zero
-        const numberStr = localCounter.toString().padStart(digitCount, '0');
-        // Nama kontak dengan urutan nomor
-        const contactName = `${globalContactName} ${numberStr}`;
-        const fullContactName = currentCategory === 'Anggota' ? contactName : `${contactName} (${currentCategory})`;
+                const contactVcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${fullContactName}\nTEL:${phoneNumber}\nEND:VCARD\n`;
+                localCounter++;
+                return contactVcard;
+            } else {
+                return '';
+            }
+        }).join('\n');
 
-        vcfContent +=
-          `BEGIN:VCARD\nVERSION:3.0\nFN:${fullContactName}\nTEL:${contactNumber}\nEND:VCARD\n`;
+        const blob = new Blob([vcfContent], { type: 'text/vcard' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = newFileName;
+        link.textContent = `Unduh ${newFileName}`;
+        link.classList.add('download-link');
 
-        localCounter++;
-      }
-    }
-
-    const blob = new Blob([vcfContent], { type: 'text/vcard' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = newFileName;
-    link.textContent = `Unduh ${newFileName}`;
-    link.classList.add('download-link');
-
-    listItem.appendChild(link);
-    listItem.classList.add('success');
-  };
-  reader.readAsText(file);
+        listItem.appendChild(link);
+        listItem.classList.add('success');
+        listItem.innerHTML += `<span> → Tautan tersedia untuk diunduh</span>`;
+    };
+    reader.readAsText(file);
 }
 
 function classifyContact(contact) {
-  if (contact.match(/管理号|管理|管理员|admin|Admin/)) return 'Admin';
-  if (contact.match(/水軍|小号|水军|navy|Navy/)) return 'Navy';
-  if (contact.match(/数据|客户|底料|进群资源|资料|Anggota/)) return 'Anggota';
-  return null;
+    if (contact.match(/管理号|管理|管理员|admin|Admin/)) {
+        return 'Admin';
+    } else if (contact.match(/水軍|小号|水军|navy|Navy/)) {
+        return 'Navy';
+    } else if (contact.match(/数据|客户|底料|进群资源|资料|Anggota/)) {
+        return 'Anggota';
+    } else {
+        return null;
+    }
 }
